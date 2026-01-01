@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>A JOYful Bible Reading Plan</title>
+<style>
+  button:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  /* ==============================
+   Theme variables
+   ============================== */
+
+:root {
+  --bg-color: #ece6fe;        /* soft lavender-gray */
+  --text-color: #2b2b2b;
+  --accent-color: #998fea;   /* lighter purple */
+  --panel-bg: #fbf9f5;       /* cards stay white */
+  --progress-bg: #e6e4f2;
+  --progress-fill: #7c6fe6;
+}
+
+body {
+  background-color: var(--bg-color);
+  color: var(--text-color);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+/* ==============================
+   JOYful Dark Mode
+   ============================== */
+
+body.dark {
+  --bg-color: #0f172a;            /* deep navy */
+  --text-color: #e5e7eb;          /* soft light gray */
+  --accent-color: #9ee9f5;        /* teal joy */
+  --panel-bg: #1e293b;            /* slate */
+  --progress-bg: #334155;
+  --progress-fill: linear-gradient(
+    90deg,
+    #22d3ee,
+    #a78bfa,
+    #f472b6
+  );
+}
+#main-reading,
+#calendar-jump,
+#overall-progress {
+  background: var(--panel-bg);
+  padding: 10px;
+  border-radius: 8px;
+  margin-bottom: 10px;
+}
+
+button {
+  background: var(--accent-color);
+  color: #1f2937;            /* dark slate, not black */
+  border: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 500;
+}
+
+body.dark button {
+  color: #020617;
+}
+
+progress {
+  width: 100%;
+  height: 12px;
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+progress::-webkit-progress-bar {
+  background-color: var(--progress-bg);
+}
+
+progress::-webkit-progress-value {
+  background: var(--progress-fill);
+}
+</style>
+</head>
+
+<body>
+
+<h1>A JOYful Bible Reading Plan</h1>
+<button id="theme-toggle" style="margin-bottom: 10px;">
+  🌙 Dark Mode
+</button>
+<h2 id="day-title">Loading…</h2>
+<div id="calendar-jump" style="margin: 8px 0;">
+  <label style="font-size: 0.9em;">
+    Jump to date:
+    <input type="date" id="date-picker" />
+  </label>
+  <div id="date-info" style="font-size: 0.85em; margin-top: 4px;"></div>
+</div>
+<div id="overall-progress" style="margin: 10px 0;">
+  <div style="font-size: 0.9em; margin-bottom: 4px;">
+    Overall progress: <span id="progress-text"></span>
+  </div>
+  <progress id="progress-bar" value="0" max="100" style="width: 100%;"></progress>
+</div>
+<div id="day-navigation">
+  <button id="prev-day">Previous Day</button>
+  <button id="next-day">Next Day</button>
+</div>
+
+<div id="main-reading"></div>
+
+<div id="bible-project-video"></div>
+
+<p id="reflection"></p>
+
+<p id="thankful"></p>
+
+<!-- Supabase library -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+<div id="login">
+  <input
+    type="email"
+    id="email"
+    placeholder="Enter your email"
+  />
+  <button id="login-button">Send login link</button>
+</div>
+
+
+<script>
+// ==============================
+// App startup & configuration
+// ==============================
+// A JOYful Bible Reading Plan
+// Single-page app with Supabase auth, progress tracking, and day-based navigation
+  console.log("SCRIPT STARTED");
+  // Supabase client setup (ONE TIME ONLY)
+  const supabaseUrl = "https://myyyleiqgwjopwwoqauz.supabase.co";
+  const supabaseKey = "sb_publishable_AaHxeJl-Wc1V6ZmaxlaR6w_wE-bWJ3S";
+
+  const supabaseClient = window.supabase.createClient(
+    supabaseUrl,
+    supabaseKey
+  );
+
+// ==============================
+// Authentication (magic link login)
+// ==============================
+document
+  .getElementById("login-button")
+  .addEventListener("click", async () => {
+    const email = document.getElementById("email").value;
+
+    const { error } = await supabaseClient.auth.signInWithOtp({
+      email
+    });
+
+
+
+    if (error) {
+      console.error("Login error:", error);
+      alert("Error sending login link");
+    } else {
+      alert("Check your email for the login link!");
+    const {
+  data: { user }
+} = await supabaseClient.auth.getUser();
+
+if (user) {
+  await supabaseClient
+    .from("profiles")
+    .upsert({
+      user_id: user.id,
+      last_viewed_day: 1
+    });
+}
+    }
+  });
+
+// ==============================
+// User profile helpers
+// ==============================
+// - Ensure profile row exists
+// - Track last viewed day
+
+async function getCurrentUserId() {
+  const {
+    data: { user },
+    error
+  } = await supabaseClient.auth.getUser();
+
+  if (error || !user) {
+    console.error("No user logged in");
+    return null;
+  }
+
+  return user.id;
+}
+
+  // ==============================
+// Reading helpers
+// ==============================
+// - Expand chapter ranges
+// - Normalize reading keys
+
+  function expandReading(readingText) {
+    const match = readingText.match(/^(.+?) (\d+)[–-](\d+)$/);
+
+    if (!match) {
+      return [readingText];
+    }
+
+    const book = match[1];
+    const start = parseInt(match[2], 10);
+    const end = parseInt(match[3], 10);
+
+    const chapters = [];
+    for (let i = start; i <= end; i++) {
+      chapters.push(`${book} ${i}`);
+    }
+
+    return chapters;
+  }
+  function normalizeReading(text) {
+  return text.replace("–", "-").trim();
+}
+
+// ==============================
+// Progress & UI helpers
+// ==============================
+// - Overall plan progress bar
+async function updateOverallProgress(dayNumber) {
+  const { count, error } = await supabaseClient
+    .from("days")
+    .select("*", { count: "exact", head: true });
+
+  if (error || !count) {
+    console.warn("Could not calculate overall progress");
+    return;
+  }
+
+  const percent = Math.round((dayNumber / count) * 100);
+
+  const bar = document.getElementById("progress-bar");
+  const text = document.getElementById("progress-text");
+
+  if (!bar || !text) return;
+
+  bar.value = percent;
+  text.textContent = `Day ${dayNumber} of ${count} (${percent}%)`;
+}
+// ==============================
+// Calendar helpers
+// ==============================
+// - Map calendar dates to plan days
+
+function getDayNumberFromDate(selectedDate) {
+  const year = selectedDate.getFullYear();
+  const startOfYear = new Date(year, 0, 1);
+  const diffTime = selectedDate - startOfYear;
+  const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+  return diffDays + 1;
+}
+// ==============================
+// App state
+// ==============================
+let currentDay = 1;
+let hasLoadedInitialDay = false;
+document.getElementById("prev-day").addEventListener("click", async () => {
+  if (currentDay > 1) {
+    const prevDay = currentDay - 1;
+    await loadDay(prevDay);
+    currentDay = prevDay;
+  }
+});
+
+document.getElementById("next-day").addEventListener("click", async () => {
+  const nextDay = currentDay + 1;
+  const loaded = await loadDay(nextDay);
+
+  if (loaded) {
+    currentDay = nextDay;
+  }
+});
+
+
+const prevButton = document.getElementById("prev-day");
+const nextButton = document.getElementById("next-day");
+function updateNavButtons(canGoNext) {
+  prevButton.disabled = currentDay === 1;
+  nextButton.disabled = !canGoNext;
+}
+
+async function loadSavedProgress(dayNumber) {
+  const {
+    data: { user }
+  } = await supabaseClient.auth.getUser();
+
+  if (!user) {
+    return [];
+  }
+
+  const { data, error } = await supabaseClient
+    .from("progress")
+    .select("reading_key")
+    .eq("day_number", dayNumber)
+    .eq("user_id", user.id);
+
+  if (error) {
+    console.error("Error loading saved progress:", error);
+    return [];
+  }
+
+  return data.map(row => normalizeReading(row.reading_key));
+}
+// ==============================
+// Main day loader
+// ==============================
+  async function loadDay(dayNumber) {
+  console.log("loadDay called with:", dayNumber);
+  const { data, error } = await supabaseClient
+  .from("days")
+  .select("*")
+  .eq("day_number", dayNumber)
+  .maybeSingle();
+
+console.log("RAW DAYS QUERY RESULT:", data, error);
+
+    if (!data) {
+  console.warn("No day found for day_number:", dayNumber);
+  return false;
+}
+
+if (error) {
+  console.error("Error loading day:", error);
+  return false;
+}
+ document.getElementById("day-title").textContent =
+    "Day " + data.day_number;
+    console.log("TITLE UPDATED TO DAY", data.day_number);
+
+  let savedReadings = [];
+try {
+  savedReadings = await loadSavedProgress(data.day_number);
+} catch (e) {
+  console.warn("Skipping saved progress:", e);
+}
+
+    const mainReadingDiv = document.getElementById("main-reading");
+mainReadingDiv.innerHTML = ""; // clear existing content
+
+const readings = expandReading(data.main_reading);
+
+const ul = document.createElement("ul");
+
+readings.forEach((reading) => {
+  const li = document.createElement("li");
+
+  const checkbox = document.createElement("input");
+  checkbox.type = "checkbox";
+  checkbox.id = reading;
+if (savedReadings.includes(normalizeReading(reading))) {
+  checkbox.checked = true;
+  }
+checkbox.addEventListener("change", async () => {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
+
+  if (checkbox.checked) {
+    const { error } = await supabaseClient
+      .from("progress")
+      .insert({
+        user_id: userId,
+        day_number: data.day_number,
+        reading_key: reading
+      });
+
+    if (error) {
+      console.error("Error saving progress:", error);
+    }
+  } else {
+  const { error } = await supabaseClient
+    .from("progress")
+    .delete()
+    .eq("user_id", userId)
+    .eq("day_number", data.day_number)
+    .eq("reading_key", reading);
+
+  if (error) {
+    console.error("Error deleting progress:", error);
+  }
+}
+
+});
+
+
+  const label = document.createElement("label");
+  label.htmlFor = reading;
+  label.textContent = reading;
+
+  li.appendChild(checkbox);
+  li.appendChild(label);
+  ul.appendChild(li);
+});
+
+mainReadingDiv.appendChild(ul);
+
+// ==============================
+// Supplemental readings
+// ==============================
+if (data.supplemental_reading) {
+  const supHeader = document.createElement("h3");
+  supHeader.textContent = "Supplemental Reading";
+
+  const supList = document.createElement("ul");
+
+  const supplementalReadings = expandReading(data.supplemental_reading);
+
+  supplementalReadings.forEach((reading) => {
+    const li = document.createElement("li");
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.id = `supp-${reading}`;
+
+    if (savedReadings.includes(normalizeReading(reading))) {
+      checkbox.checked = true;
+    }
+
+    checkbox.addEventListener("change", async () => {
+      const userId = await getCurrentUserId();
+      if (!userId) return;
+
+      if (checkbox.checked) {
+        await supabaseClient.from("progress").insert({
+          user_id: userId,
+          day_number: data.day_number,
+          reading_key: reading
+        });
+      } else {
+        await supabaseClient.from("progress").delete()
+          .eq("user_id", userId)
+          .eq("day_number", data.day_number)
+          .eq("reading_key", reading);
+      }
+    });
+
+    const label = document.createElement("label");
+    label.htmlFor = checkbox.id;
+    label.textContent = reading;
+
+    li.appendChild(checkbox);
+    li.appendChild(label);
+    supList.appendChild(li);
+  });
+
+  mainReadingDiv.appendChild(supHeader);
+  mainReadingDiv.appendChild(supList);
+}
+
+
+
+    document.getElementById("reflection").textContent =
+      "Reflection: " + data.reflection;
+
+    document.getElementById("thankful").textContent =
+      "Thankful prompt: " + data.thankful_prompt;
+ const videoDiv = document.getElementById("bible-project-video");
+videoDiv.innerHTML = "";
+
+if (data.bibleproject_video) {
+  const link = document.createElement("a");
+  link.href = data.bibleproject_video;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = "Watch Bible Project Video";
+
+  videoDiv.appendChild(link);
+}
+const { data: nextDayExists } = await supabaseClient
+  .from("days")
+  .select("day_number")
+  .eq("day_number", dayNumber + 1)
+  .maybeSingle();
+
+updateNavButtons(!!nextDayExists);
+const {
+  data: { user }
+} = await supabaseClient.auth.getUser();
+
+if (user) {
+  await supabaseClient
+    .from("profiles")
+    .update({
+      last_viewed_day: dayNumber
+    })
+    .eq("user_id", user.id);
+}
+updateOverallProgress(dayNumber);
+supabaseClient.auth.getUser().then(({ data }) => {
+  if (data.user) {
+    supabaseClient
+      .from("profiles")
+      .upsert({
+        user_id: data.user.id,
+        last_viewed_day: dayNumber
+      });
+  }
+});
+
+return true;
+}
+// ==============================
+// Theme toggle
+// ==============================
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  document.body.classList.toggle("dark");
+
+  const isDark = document.body.classList.contains("dark");
+  document.getElementById("theme-toggle").textContent =
+    isDark ? "☀️ Light Mode" : "🌙 Dark Mode";
+});
+
+// ==============================
+// App initialization
+// ==============================
+document.getElementById("date-picker").addEventListener("change", (e) => {
+  const [year, month, day] = e.target.value.split("-");
+const selectedDate = new Date(year, month - 1, day);
+  if (isNaN(selectedDate)) return;
+
+  const dayNumber = getDayNumberFromDate(selectedDate);
+
+  document.getElementById("date-info").textContent =
+    `Day ${dayNumber} – ${selectedDate.toLocaleDateString(undefined, {
+      month: "long",
+      day: "numeric"
+    })}`;
+
+  loadDay(dayNumber);
+});
+
+(async () => {
+  const { data: { session } } = await supabaseClient.auth.getSession();
+
+  if (session) {
+    const { data: profile } = await supabaseClient
+      .from("profiles")
+      .select("last_viewed_day")
+      .eq("user_id", session.user.id)
+      .maybeSingle();
+
+    if (profile?.last_viewed_day) {
+      currentDay = profile.last_viewed_day;
+    }
+  }
+
+  // ONE load, after we know what day to use
+  loadDay(currentDay);
+})();
+</script>
+
+</body>
+</html>
