@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <title>A JOYful Bible Reading Plan</title>
+<a
+  href="https://calendar.google.com/calendar/render?action=TEMPLATE&text=JOYful+Bible+Reading&details=Time+for+today%E2%80%99s+reading.&recur=RRULE:FREQ=DAILY"
+  target="_blank"
+  rel="noopener noreferrer"
+>
+  Add daily reminder to Google Calendar
+</a>
 <style>
   button:disabled {
     opacity: 0.4;
@@ -158,27 +165,95 @@ document
       email
     });
 
-
-
     if (error) {
       console.error("Login error:", error);
       alert("Error sending login link");
-    } else {
-      alert("Check your email for the login link!");
-    const {
-  data: { user }
-} = await supabaseClient.auth.getUser();
+      return;
+    }
 
-if (user) {
-  await supabaseClient
-    .from("profiles")
-    .upsert({
-      user_id: user.id,
-      last_viewed_day: 1
-    });
-}
+    alert("Check your email for the login link!");
+
+    const {
+      data: { user }
+    } = await supabaseClient.auth.getUser();
+
+    if (user) {
+      await supabaseClient
+        .from("profiles")
+        .upsert({
+          user_id: user.id,
+          last_viewed_day: 1
+        });
     }
   });
+
+async function updateOverallProgress() {
+  const {
+    data: { user }
+  } = await supabaseClient.auth.getUser();
+
+  if (!user) return;
+
+  const { data: days, error: daysError } = await supabaseClient
+    .from("days")
+    .select("day_number, main_reading, supplemental_reading");
+
+  if (daysError || !days) {
+    console.error("Error loading days for progress:", daysError);
+    return;
+  }
+
+  const { data: progress, error: progressError } = await supabaseClient
+    .from("progress")
+    .select("day_number, reading_key")
+    .eq("user_id", user.id);
+
+  if (progressError) {
+    console.error("Error loading progress:", progressError);
+    return;
+  }
+
+  // Build a Set of completed keys per day to avoid duplicates messing counts
+  const completedKeysByDay = {};
+  (progress || []).forEach(row => {
+    const dn = row.day_number;
+    const key = normalizeReading(row.reading_key);
+
+    if (!completedKeysByDay[dn]) completedKeysByDay[dn] = new Set();
+    completedKeysByDay[dn].add(key);
+  });
+
+  let completedDays = 0;
+
+  days.forEach(day => {
+    const readings = [
+      ...expandReading(day.main_reading || ""),
+      ...expandReading(day.supplemental_reading || "")
+    ]
+      .map(r => normalizeReading(r))
+      .filter(r => r.length > 0);
+
+    const totalReadings = readings.length;
+    const completedSet = completedKeysByDay[day.day_number] || new Set();
+
+    // Count how many of THIS day's expected readings are completed
+    let completedForDay = 0;
+    readings.forEach(r => {
+      if (completedSet.has(r)) completedForDay++;
+    });
+
+    if (totalReadings > 0 && completedForDay === totalReadings) {
+      completedDays++;
+    }
+  });
+
+  const totalDays = days.length;
+  const percent = Math.round((completedDays / totalDays) * 100);
+
+  document.getElementById("progress-bar").value = percent;
+  document.getElementById("progress-text").textContent =
+    `Day ${completedDays} of ${totalDays} (${percent}%)`;
+}
 
 // ==============================
 // User profile helpers
@@ -228,30 +303,8 @@ async function getCurrentUserId() {
   return text.replace("–", "-").trim();
 }
 
-// ==============================
-// Progress & UI helpers
-// ==============================
-// - Overall plan progress bar
-async function updateOverallProgress(dayNumber) {
-  const { count, error } = await supabaseClient
-    .from("days")
-    .select("*", { count: "exact", head: true });
 
-  if (error || !count) {
-    console.warn("Could not calculate overall progress");
-    return;
-  }
 
-  const percent = Math.round((dayNumber / count) * 100);
-
-  const bar = document.getElementById("progress-bar");
-  const text = document.getElementById("progress-text");
-
-  if (!bar || !text) return;
-
-  bar.value = percent;
-  text.textContent = `Day ${dayNumber} of ${count} (${percent}%)`;
-}
 // ==============================
 // Calendar helpers
 // ==============================
@@ -369,32 +422,39 @@ checkbox.addEventListener("change", async () => {
   const userId = await getCurrentUserId();
   if (!userId) return;
 
+  const key = normalizeReading(reading);
+
   if (checkbox.checked) {
     const { error } = await supabaseClient
       .from("progress")
-      .insert({
-        user_id: userId,
-        day_number: data.day_number,
-        reading_key: reading
-      });
+      .upsert(
+        {
+          user_id: userId,
+          day_number: data.day_number,
+          reading_key: key
+        },
+        { onConflict: "user_id,day_number,reading_key" }
+      );
 
     if (error) {
       console.error("Error saving progress:", error);
     }
   } else {
-  const { error } = await supabaseClient
-    .from("progress")
-    .delete()
-    .eq("user_id", userId)
-    .eq("day_number", data.day_number)
-    .eq("reading_key", reading);
+    const { error } = await supabaseClient
+      .from("progress")
+      .delete()
+      .eq("user_id", userId)
+      .eq("day_number", data.day_number)
+      .eq("reading_key", key);
 
-  if (error) {
-    console.error("Error deleting progress:", error);
+    if (error) {
+      console.error("Error deleting progress:", error);
+    }
   }
-}
 
+  await updateOverallProgress();
 });
+
 
 
   const label = document.createElement("label");
@@ -430,23 +490,42 @@ if (data.supplemental_reading) {
       checkbox.checked = true;
     }
 
-    checkbox.addEventListener("change", async () => {
-      const userId = await getCurrentUserId();
-      if (!userId) return;
+   checkbox.addEventListener("change", async () => {
+  const userId = await getCurrentUserId();
+  if (!userId) return;
 
-      if (checkbox.checked) {
-        await supabaseClient.from("progress").insert({
+  const key = normalizeReading(reading);
+
+  if (checkbox.checked) {
+    const { error } = await supabaseClient
+      .from("progress")
+      .upsert(
+        {
           user_id: userId,
           day_number: data.day_number,
-          reading_key: reading
-        });
-      } else {
-        await supabaseClient.from("progress").delete()
-          .eq("user_id", userId)
-          .eq("day_number", data.day_number)
-          .eq("reading_key", reading);
-      }
-    });
+          reading_key: key
+        },
+        { onConflict: "user_id,day_number,reading_key" }
+      );
+
+    if (error) {
+      console.error("Error saving progress (supplemental):", error);
+    }
+  } else {
+    const { error } = await supabaseClient
+      .from("progress")
+      .delete()
+      .eq("user_id", userId)
+      .eq("day_number", data.day_number)
+      .eq("reading_key", key);
+
+    if (error) {
+      console.error("Error deleting progress (supplemental):", error);
+    }
+  }
+
+  await updateOverallProgress();
+});
 
     const label = document.createElement("label");
     label.htmlFor = checkbox.id;
@@ -499,7 +578,6 @@ if (user) {
     })
     .eq("user_id", user.id);
 }
-updateOverallProgress(dayNumber);
 supabaseClient.auth.getUser().then(({ data }) => {
   if (data.user) {
     supabaseClient
@@ -510,7 +588,7 @@ supabaseClient.auth.getUser().then(({ data }) => {
       });
   }
 });
-
+await updateOverallProgress();
 return true;
 }
 // ==============================
@@ -527,20 +605,14 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
 // ==============================
 // App initialization
 // ==============================
-document.getElementById("date-picker").addEventListener("change", (e) => {
+document.getElementById("date-picker").addEventListener("change", async (e) => {
   const [year, month, day] = e.target.value.split("-");
-const selectedDate = new Date(year, month - 1, day);
-  if (isNaN(selectedDate)) return;
+  const selectedDate = new Date(year, month - 1, day);
 
   const dayNumber = getDayNumberFromDate(selectedDate);
 
-  document.getElementById("date-info").textContent =
-    `Day ${dayNumber} – ${selectedDate.toLocaleDateString(undefined, {
-      month: "long",
-      day: "numeric"
-    })}`;
-
-  loadDay(dayNumber);
+  currentDay = dayNumber;
+  await loadDay(currentDay);
 });
 
 (async () => {
@@ -559,7 +631,8 @@ const selectedDate = new Date(year, month - 1, day);
   }
 
   // ONE load, after we know what day to use
-  loadDay(currentDay);
+ await loadDay(currentDay);
+await updateOverallProgress();
 })();
 </script>
 
