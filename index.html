@@ -162,28 +162,17 @@ document
     const email = document.getElementById("email").value;
 
     const { error } = await supabaseClient.auth.signInWithOtp({
-      email
+      email,
+      options: {
+        redirectTo: "https://allisonjoyful.github.io/joyful-bible-reading-plan/"
+      }
     });
 
     if (error) {
       console.error("Login error:", error);
       alert("Error sending login link");
-      return;
-    }
-
-    alert("Check your email for the login link!");
-
-    const {
-      data: { user }
-    } = await supabaseClient.auth.getUser();
-
-    if (user) {
-      await supabaseClient
-        .from("profiles")
-        .upsert({
-          user_id: user.id,
-          last_viewed_day: 1
-        });
+    } else {
+      alert("Check your email for the login link!");
     }
   });
 
