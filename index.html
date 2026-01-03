@@ -318,8 +318,8 @@ function getDayNumberFromDate(selectedDate) {
 // ==============================
 // App state
 // ==============================
-let currentDay = 1;
-let hasLoadedInitialDay = false;
+const savedDay = localStorage.getItem("lastViewedDay");
+let currentDay = savedDay ? parseInt(savedDay, 10) : 1;
 document.getElementById("prev-day").addEventListener("click", async () => {
   if (currentDay > 1) {
     const prevDay = currentDay - 1;
@@ -392,7 +392,7 @@ if (error) {
  document.getElementById("day-title").textContent =
     "Day " + data.day_number;
     console.log("TITLE UPDATED TO DAY", data.day_number);
-
+localStorage.setItem("lastViewedDay", data.day_number);
   let savedReadings = [];
 try {
   savedReadings = await loadSavedProgress(data.day_number);
