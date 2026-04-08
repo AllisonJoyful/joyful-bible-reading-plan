@@ -415,10 +415,14 @@
 
     function getDayNumberFromDate(selectedDate) {
       const year = selectedDate.getFullYear();
-      const startOfYear = new Date(year, 0, 1);
-      const diffTime = selectedDate - startOfYear;
-      const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
-      return diffDays + 1;
+      const start = Date.UTC(selectedDate.getFullYear(), 0, 1);
+      const current = Date.UTC(
+        selectedDate.getFullYear(),
+        selectedDate.getMonth(),
+        selectedDate.getDate()
+);
+const dayNumber = Math.floor((current - start) / 86400000) + 1;
+      return dayNumber;
     }
 
     // ==============================
